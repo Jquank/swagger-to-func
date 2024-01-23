@@ -1,0 +1,53 @@
+{
+  "name": "swagger-to-func",
+  "displayName": "swagger-to-func",
+  "description": "swagger api json to func",
+  "version": "0.0.9",
+  "publisher": "stf-token",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "license": "MIT",
+  "contributes": {
+    "commands": [
+      {
+        "command": "swagger-to-func.stf",
+        "title": "stf"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "webpack --mode production",
+    "compile": "webpack --mode none",
+    "watch": "tsc -watch -p ./",
+    "watch1": "webpack --mode none --watch",
+    "pretest": "yarn run compile && yarn run lint",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test",
+    "api": "npx openapi --input http://localhost:3000/api-json --output ./gg --client xhr"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "18.x",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "@vscode/test-cli": "^0.0.4",
+    "@vscode/test-electron": "^2.3.8",
+    "clean-webpack-plugin": "^4.0.0",
+    "eslint": "^8.56.0",
+    "openapi-types": "^12.1.3",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.3.3",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "prettier": "^3.2.4"
+  }
+}
