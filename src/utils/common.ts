@@ -60,6 +60,7 @@ export class Stf {
     let pathParam = ''
     let queryParam = ''
     let queryParamType = ''
+    let axiosConfig = 'axiosConfig: AxiosRequestConfig = {}'
     if (parameters && parameters.length) {
       parameters.forEach((p: any) => {
         // 参数是path类型
@@ -84,10 +85,10 @@ export class Stf {
 
     // 没有body参数，直接返回path和query参数
     if (!item.requestBody) {
-      return pathParam + queryParam
+      return pathParam + queryParam + axiosConfig
     }
 
-    const requiredStr = item.requestBody.required ? '' : '?'
+    // 处理requestBody的情况
     const jsonContentSchmea =
       item.requestBody.content['application/json']['schema']
     const type = jsonContentSchmea.type
@@ -122,23 +123,24 @@ export class Stf {
 
     if (['string', 'number', 'boolean'].includes(type)) {
       // 简单数据类型
-      return pathParam + queryParam + `data${requiredStr}: ${item.type}`
+      return pathParam + queryParam + `data: ${item.type},` + axiosConfig
     } else if (type === 'array') {
       if (item.type) {
         // 简单数组
-        return pathParam + queryParam + `data${requiredStr}: ${item.type}[]`
+        return pathParam + queryParam + `data: ${item.type}[],` + axiosConfig
       } else {
         // 对象数组
         return (
           pathParam +
           queryParam +
-          `data${requiredStr}: ${intefaceName || 'any'}[]`
+          `data: ${intefaceName || 'any'}[],` +
+          axiosConfig
         )
       }
     } else {
       // 对象类型
       return (
-        pathParam + queryParam + `data${requiredStr}: ${intefaceName || 'any'}`
+        pathParam + queryParam + `data: ${intefaceName || 'any'},` + axiosConfig
       )
     }
   }
@@ -231,7 +233,7 @@ export class Stf {
             funcMap.set(tag, [])
           }
           let mapValue = funcMap.get(tag)
-          // 参数
+          // 构造参数
           let funcArguments = this.generateArguments(
             funcName,
             item,
@@ -239,13 +241,17 @@ export class Stf {
             tag,
             eol
           )
-          // 传参
+          // 构造传参
           let args = ''
           ;['params', 'data'].forEach((argType) => {
-            if (funcArguments.includes(argType + ':')) {
+            if (
+              funcArguments.includes(argType + ':') ||
+              funcArguments.includes(argType + '?:')
+            ) {
               args += `${argType},`
             }
           })
+          args += '...axiosConfig,'
           // response类型
           let respontDataType = this.generateRespontDataType(
             item,
@@ -307,7 +313,7 @@ export const main = async (dirname: string, url: string) => {
       let str = await formatCode(`
         /* eslint-disable @typescript-eslint/no-explicit-any */
         import { $http } from '../http'${eol}
-        import { ResponseType } from '../responseType'${eol}
+        import { ResponseType, AxiosRequestConfig } from '../responseType'${eol}
         ${stf.interfaceList[k]}${eol}
         class ${upperK}{${eol}
         ${methodsStr}
@@ -331,6 +337,7 @@ export const main = async (dirname: string, url: string) => {
       /** this file only write once, 
        * you can modify this type according to your needs, the generic type T is the response data type, 
        */
+      export { AxiosRequestConfig } from 'axios'
       export interface ResponseType<T = any> {
         code?: number
         status?: number
