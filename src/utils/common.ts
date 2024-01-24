@@ -263,7 +263,7 @@ export class Stf {
             `
             /** ${item.summary || ''} */
             ${funcName}(${funcArguments}): ${respontDataType}{${eol}
-            return $http.request({url:${correctRequestPath}, ${args ? `...{${args}}` : ''}})}`
+            return $http.request({url:${correctRequestPath}, method: '${me}', ${args ? `...{${args}}` : ''}})}`
           )
         })
       }
