@@ -13,20 +13,23 @@ const upperCaseFirstLetter = (letter: string) => {
   return k.replace(k[0], k[0].toUpperCase())
 }
 
+let defaultPrettierConfig = JSON.stringify({
+  parser: 'typescript',
+  semi: false,
+  printWidth: 80,
+  singleQuote: true,
+  tabWidth: 2,
+  trailingComma: 'none',
+  endOfLIne: 'Lf'
+})
+
 const formatCode = (str: string) => {
-  return format(str, {
-    parser: 'typescript',
-    semi: false,
-    printWidth: 80,
-    singleQuote: true,
-    tabWidth: 2,
-    trailingComma: 'none',
-    endOfLIne: 'Lf'
-  })
+  return format(str, JSON.parse(defaultPrettierConfig))
 }
 
 export class Stf {
   public interfaceList: Record<string, string>
+
   constructor() {
     this.interfaceList = {}
   }
@@ -111,7 +114,7 @@ export class Stf {
           props[k].type === 'array' ? 'any[]' : props[k].type
         }${eol}`
       })
-      interfaceStr += `interface ${intefaceName}{
+      interfaceStr += `export interface ${intefaceName}{
         ${str}
       }${eol}`
 
@@ -180,7 +183,7 @@ export class Stf {
           props[k].type === 'array' ? 'any[]' : props[k].type
         }${eol}`
       })
-      interfaceStr += `interface ${intefaceName}{
+      interfaceStr += `export interface ${intefaceName}{
         ${str}
       }${eol}`
       if (!this.interfaceList[tag]) {
@@ -289,16 +292,37 @@ export const main = async (dirname: string, url: string) => {
     recursive: true
   })
 
-  // 写入http导入文件，'@/utils/http'是个默认路径，使用者可自行修改，此文件只会写入一次
-  fs.access(path.resolve(apiPath, 'http.ts')).catch(async () => {
-    let str = await formatCode(`/** this file only write once, 
-    * import your axios instace or other http method like axios, and then, export it 
-    */${eol}
+  // 写入格式化配置文件，一次
+  try {
+    await fs.access(
+      path.resolve(apiPath, 'prettierConfig.json'),
+      fs.constants.F_OK
+    )
+    defaultPrettierConfig = await fs.readFile(
+      path.resolve(apiPath, 'prettierConfig.json'),
+      'utf-8'
+    )
+  } catch (error) {
+    let str = await format(defaultPrettierConfig, { parser: 'json' })
+    fs.writeFile(path.resolve(apiPath, 'prettierConfig.json'), str)
+  }
+
+  // 写入http导入文件，'@/utils/http'是个默认路径，使用者可自行修改
+  let defaultHttpStr = `
+    /** import your axios instace or other http method like axios, and then, export it */${eol}
     import $http from '@/utils/http'${eol}
     export { $http }${eol}
-    `)
-    fs.writeFile(path.resolve(apiPath, 'http.ts'), str)
-  })
+    `
+  fs.access(path.resolve(apiPath, 'http.ts'), fs.constants.F_OK)
+    .then(async () => {
+      let res = await fs.readFile(path.resolve(apiPath, 'http.ts'), 'utf-8')
+      let str = await formatCode(res)
+      fs.writeFile(path.resolve(apiPath, 'http.ts'), str)
+    })
+    .catch(async () => {
+      let str = await formatCode(defaultHttpStr)
+      fs.writeFile(path.resolve(apiPath, 'http.ts'), str)
+    })
 
   // 写入模块类和index.ts
   let indexStr = ''
@@ -309,7 +333,11 @@ export const main = async (dirname: string, url: string) => {
       let k = key.trim()
       let upperK = upperCaseFirstLetter(k)
       indexStr += `
-        export { ${k}Api } from './modules/${k}.ts'`
+        import type * as ${upperCaseFirstLetter(k)}Type from './modules/${k}.ts'
+        import { ${k}Api } from './modules/${k}.ts'
+        export type { ${upperCaseFirstLetter(k)}Type }
+        export { ${k}Api }
+        ${eol}`
       let str = await formatCode(`
         /* eslint-disable @typescript-eslint/no-explicit-any */
         import { $http } from '../http'${eol}
@@ -331,21 +359,31 @@ export const main = async (dirname: string, url: string) => {
     throw error
   }
 
-  // 写入responseType.ts，使用者可自行修改，此文件只会写入一次
+  // 写入responseType.ts，使用者可自行修改
   let responseType = await formatCode(`
       /* eslint-disable @typescript-eslint/no-explicit-any */
-      /** this file only write once, 
-       * you can modify this type according to your needs, the generic type T is the response data type, 
-       */
+      /** you can modify this type according to your needs, the generic type T is the response data type */
       export { AxiosRequestConfig } from 'axios'
       export interface ResponseType<T = any> {
-        code?: number
+        code: number
+        message: string
+        data: T
         status?: number
-        message?: string
         success?: boolean
-        data?: T
+        path?: string
+        time?: number | string
       }`)
-  fs.access(path.resolve(apiPath, `responseType.ts`)).catch(() => {
-    fs.writeFile(path.resolve(apiPath, 'responseType.ts'), responseType)
-  })
+  fs.access(path.resolve(apiPath, 'responseType.ts'), fs.constants.F_OK)
+    .then(async () => {
+      let res = await fs.readFile(
+        path.resolve(apiPath, 'responseType.ts'),
+        'utf-8'
+      )
+      let str = await formatCode(res)
+      fs.writeFile(path.resolve(apiPath, 'responseType.ts'), str)
+    })
+    .catch(async () => {
+      let str = await formatCode(responseType)
+      fs.writeFile(path.resolve(apiPath, 'responseType.ts'), str)
+    })
 }
