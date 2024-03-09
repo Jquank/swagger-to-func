@@ -28,10 +28,14 @@ const formatCode = (str: string) => {
 }
 
 export class Stf {
+  private static funcName = '_funcName_' // 默认函数名
   public interfaceList: Record<string, string>
-
+  public dtoTypes: string
+  public tag: string
   constructor() {
     this.interfaceList = {}
+    this.dtoTypes = ''
+    this.tag = ''
   }
   /**生成函数名 */
   generateFuncName(
@@ -51,6 +55,86 @@ export class Stf {
     })
     return str
   }
+
+  /** 生成类型 */
+  getType(schema: any, eol: string, prefix?: string) {
+    if (schema.type) {
+      if (schema.type === 'array') {
+        // 数组类型（有items，分为items.type和item.$ref）
+        if (schema.items.type) {
+          return `${schema.items.type}[]`
+        } else if (schema.items.$ref) {
+          let interfaceName = this.getRefType(schema.items.$ref)
+          return `${interfaceName}[]`
+        } else {
+          return `any[]`
+        }
+      } else if (schema.type === 'object') {
+        // 对象类型，Stf.funcName为虚拟代位函数名，后续做统一替换处理
+        try {
+          const props = schema.properties || {}
+          /** upKey为上层对象的属性名  */
+          const upKey = schema._upKey_
+          const name = schema._typeName_
+          const required = schema.required || []
+          let interfaceName = ''
+          let str = ''
+          const isContainPrefix = (s: string) =>
+            new RegExp('^' + prefix).test(s)
+          if (prefix === 'Dto') {
+            let rPrefix = isContainPrefix(name) ? '' : prefix + '_'
+            interfaceName = rPrefix + name + (upKey ? `_${upKey}` : '')
+            str = `interface ${interfaceName} {${eol}`
+          } else {
+            let rPrefix = !name || !isContainPrefix(name) ? prefix + '_' : ''
+            interfaceName =
+              rPrefix + (name || Stf.funcName) + (upKey ? `_${upKey}` : '')
+            str = `${upKey ? '' : 'export'} interface ${interfaceName} {${eol}`
+          }
+          Object.keys(props).forEach((k) => {
+            str += `${k}${required.includes(k) ? '' : '?'}: ${this.getType({ _upKey_: k, _typeName_: interfaceName, ...props[k] }, eol, prefix)}${eol}`
+          })
+          str += `}${eol}`
+          if (prefix === 'Dto') {
+            this.dtoTypes += str
+          } else {
+            this.interfaceList[this.tag] += str
+          }
+
+          return interfaceName
+        } catch {
+          return 'any'
+        }
+      } else {
+        // 基本类型
+        return `${schema.type}`
+      }
+    } else if (schema.$ref) {
+      let interfaceName = this.getRefType(schema.$ref)
+
+      return interfaceName
+    } else {
+      return 'any'
+    }
+  }
+
+  /**生成所有dto类型，放入this.dtoTypes */
+  getDtoType(components: any, eol: string) {
+    let schemas: Record<string, any> = components.schemas
+    for (const [name, v] of Object.entries(schemas)) {
+      this.getType({ _typeName_: name, ...v }, eol, 'Dto')
+    }
+  }
+
+  /** 处理$ref类型*/
+  getRefType(ref: string, components?: any, eol?: string, dtoName?: string) {
+    const pathArr = ref
+      .split('/')
+      .filter((p: string) => p !== '#' && p !== 'components')
+    const name = pathArr[1]
+    return 'Dto_' + name
+  }
+
   /**生成参数及参数类型 */
   generateArguments(
     funcName: string,
@@ -78,74 +162,44 @@ export class Stf {
     }
     // 处理query参数及类型
     if (queryParamType) {
-      if (!this.interfaceList[tag]) {
-        this.interfaceList[tag] = ''
-      }
       this.interfaceList[tag] +=
         `interface Query_${funcName}{${queryParamType}}${eol}`
       queryParam = `params: Query_${funcName}, `
     }
 
     // 没有body参数，直接返回path和query参数
-    if (!item.requestBody) {
+    if (
+      !item.requestBody ||
+      !item.requestBody.content ||
+      !item.requestBody.content['application/json'] ||
+      !item.requestBody.content['application/json']['schema']
+    ) {
       return pathParam + queryParam + axiosConfig
     }
 
     // 处理requestBody的情况
     const jsonContentSchmea =
       item.requestBody.content['application/json']['schema']
-    const type = jsonContentSchmea.type
-    const items = jsonContentSchmea.items
-    const ref = jsonContentSchmea.$ref || (items ? items.$ref : null)
-    let intefaceName = ''
-    let interfaceStr = ''
-    let str = ''
-    if (ref) {
-      const pathArr = ref
-        .split('/')
-        .filter((p: string) => p !== '#' && p !== 'components')
-      let schmeaData = components[pathArr[0]][pathArr[1]]
-      intefaceName = `Body_${pathArr[0]}${pathArr[1]}`
-      let props = schmeaData.properties
 
-      Object.keys(props).forEach((k) => {
-        // todo ${props[k].type}如果为复杂类型，需要递归
-        str += `${k}${schmeaData.required.includes(k) ? '' : '?'}: ${
-          props[k].type === 'array' ? 'any[]' : props[k].type
-        }${eol}`
-      })
-      interfaceStr += `export interface ${intefaceName}{
-        ${str}
-      }${eol}`
-
-      if (!this.interfaceList[tag]) {
-        this.interfaceList[tag] = ''
-      }
-      this.interfaceList[tag] += interfaceStr
-    }
-
-    if (['string', 'number', 'boolean'].includes(type)) {
-      // 简单数据类型
-      return pathParam + queryParam + `data: ${item.type},` + axiosConfig
-    } else if (type === 'array') {
-      if (item.type) {
-        // 简单数组
-        return pathParam + queryParam + `data: ${item.type}[],` + axiosConfig
-      } else {
-        // 对象数组
-        return (
-          pathParam +
-          queryParam +
-          `data: ${intefaceName || 'any'}[],` +
-          axiosConfig
-        )
+    const bodyDataType = this.getType(jsonContentSchmea, eol, 'Body')
+    let rdt = ''
+    // 参数类型如果不是基本数据类型和any，则统一取名Body_+函数名，并导出
+    if (
+      !['string', 'number', 'boolean', 'symbol', 'bigint', 'any'].includes(
+        bodyDataType.replace('[]', '')
+      )
+    ) {
+      rdt = bodyDataType.includes('[]')
+        ? `Body_${funcName}[]`
+        : `Body_${funcName}`
+      if (!bodyDataType.includes(Stf.funcName)) {
+        this.interfaceList[tag] +=
+          `export type Body_${funcName} = ${bodyDataType.replace('[]', '')}${eol}`
       }
     } else {
-      // 对象类型
-      return (
-        pathParam + queryParam + `data: ${intefaceName || 'any'},` + axiosConfig
-      )
+      rdt = bodyDataType
     }
+    return pathParam + queryParam + `data: ${rdt},` + axiosConfig
   }
 
   /**生成响应的data类型 */
@@ -153,65 +207,48 @@ export class Stf {
     item: any,
     components: any,
     tag: string,
-    eol: string
+    eol: string,
+    funcName: string
   ) {
     if (
       !item.responses ||
       !item.responses['200'] ||
-      !item.responses['200']['content']
+      !item.responses['200']['content'] ||
+      !item.responses['200']['content']['application/json']
     ) {
       return 'Promise<ResponseType<any>>'
     }
     const JsonContent = item.responses['200']['content']['application/json']
     const jsonContentSchmea = JsonContent.schema
-    const type = jsonContentSchmea.type
-    const items = jsonContentSchmea.items
-    const ref = jsonContentSchmea.$ref || (items ? items.$ref : null)
-    let intefaceName = ''
-    let interfaceStr = ''
-    if (ref) {
-      const pathArr = ref
-        .split('/')
-        .filter((p: string) => p !== '#' && p !== 'components')
-      let schmeaData = components[pathArr[0]][pathArr[1]]
-      intefaceName = `Res_${pathArr[0]}${pathArr[1]}`
-      let props = schmeaData.properties
-      let str = ''
-      Object.keys(props).forEach((k) => {
-        // todo ${props[k].type}如果为复杂类型，需要递归
-        str += `${k}${schmeaData.required.includes(k) ? '' : '?'}: ${
-          props[k].type === 'array' ? 'any[]' : props[k].type
-        }${eol}`
-      })
-      interfaceStr += `export interface ${intefaceName}{
-        ${str}
-      }${eol}`
-      if (!this.interfaceList[tag]) {
-        this.interfaceList[tag] = ''
-      }
-      this.interfaceList[tag] += interfaceStr
-    }
-    if (['string', 'number', 'boolean'].includes(type)) {
-      // 简单数据类型
-      return `Promise<ResponseType<${type}>>`
-    } else if (type === 'array') {
-      if (item.type) {
-        // 简单数组
-        return `Promise<ResponseType<${item.type}[]>>`
-      } else {
-        // 对象数组
-        return `Promise<ResponseType<${intefaceName || 'any'}[]>>`
+
+    const responseDataType = this.getType(jsonContentSchmea, eol, 'Res')
+    let rdt = ''
+    // 响应类型如果不是基本数据类型和any，则统一取名Res_+函数名，并导出
+    if (
+      !['string', 'number', 'boolean', 'symbol', 'bigint', 'any'].includes(
+        responseDataType.replace('[]', '')
+      )
+    ) {
+      rdt = responseDataType.includes('[]')
+        ? `Res_${funcName}[]`
+        : `Res_${funcName}`
+      if (!responseDataType.includes(Stf.funcName)) {
+        this.interfaceList[tag] +=
+          `export type Res_${funcName} = ${responseDataType.replace('[]', '')}${eol}`
       }
     } else {
-      // 对象类型
-      return `Promise<ResponseType<${intefaceName || 'any'}>>`
+      rdt = responseDataType
     }
+    return `Promise<ResponseType<${rdt}>>`
   }
 
   /**处理swagger json数据 */
   handlePaths(swaggerJson: OpenAPIV3.Document, eol: string) {
     const paths = swaggerJson.paths
     const components = swaggerJson.components
+    // 生成dto类型
+    this.getDtoType(components, eol)
+
     const funcMap = new Map()
     Object.keys(paths).forEach((key) => {
       let d = paths[key]
@@ -226,9 +263,15 @@ export class Stf {
         let me = method as OpenAPIV3.HttpMethods
         const item = d[me]! as OpenAPIV3.OperationObject
         if (!item.tags) {
-          item.tags = ['common']
+          // 如果没有tag分类，则创建_common模块
+          item.tags = ['_common']
         }
         item.tags.forEach((tag: string) => {
+          this.tag = tag
+          if (!this.interfaceList[tag]) {
+            this.interfaceList[tag] = ''
+          }
+
           const funcName = this.generateFuncName(key, item, me, tag)
           const requestBody = item.requestBody as OpenAPIV3.RequestBodyObject
           let required = requestBody && requestBody.required
@@ -260,8 +303,15 @@ export class Stf {
             item,
             components,
             tag,
-            eol
+            eol,
+            funcName
           )
+
+          this.interfaceList[tag] = this.interfaceList[tag].replace(
+            new RegExp(Stf.funcName, 'g'),
+            funcName
+          )
+
           mapValue.push(
             `
             /** ${item.summary || ''} */
@@ -307,6 +357,10 @@ export const main = async (dirname: string, url: string) => {
     fs.writeFile(path.resolve(apiPath, 'prettierConfig.json'), str)
   }
 
+  // // 写入dto类型文件
+  // let dtoStr = await formatCode(stf.dtoTypes)
+  // fs.writeFile(path.resolve(apiPath, 'dtoType.ts'), dtoStr)
+
   // 写入http导入文件，'@/utils/http'是个默认路径，使用者可自行修改
   let defaultHttpStr = `
     /** import your axios instace or other http method like axios, and then, export it */${eol}
@@ -324,6 +378,26 @@ export const main = async (dirname: string, url: string) => {
       fs.writeFile(path.resolve(apiPath, 'http.ts'), str)
     })
 
+  let regName = /Dto_\w+/g
+  /** 从dtoTypes中截取所要用到的类型（包含dto相互引用和循环引用） */
+  const sliceDtoTypes = (tag: string, nameMatch: string[] | null) => {
+    if (!nameMatch) {
+      return
+    }
+    nameMatch.forEach((name) => {
+      let str = `interface ${name}`
+      let regInterface = new RegExp(`${str} {[^}]*}`)
+      let match = stf.dtoTypes.match(regInterface)
+      if (match) {
+        // 防止重复写入
+        if (stf.interfaceList[tag].includes(str)) {
+          return
+        }
+        stf.interfaceList[tag] = match[0] + `${eol}` + stf.interfaceList[tag]
+        sliceDtoTypes(tag, match[0].match(regName))
+      }
+    })
+  }
   // 写入模块类和index.ts
   let indexStr = ''
   try {
@@ -338,6 +412,11 @@ export const main = async (dirname: string, url: string) => {
         export type { ${upperCaseFirstLetter(k)}Type }
         export { ${k}Api }
         ${eol}`
+
+      sliceDtoTypes(k, stf.interfaceList[k].match(regName))
+
+      console.log(stf.dtoTypes)
+
       let str = await formatCode(`
         /* eslint-disable @typescript-eslint/no-explicit-any */
         import { $http } from '../http'${eol}
@@ -363,7 +442,7 @@ export const main = async (dirname: string, url: string) => {
   let responseType = await formatCode(`
       /* eslint-disable @typescript-eslint/no-explicit-any */
       /** you can modify this type according to your needs, the generic type T is the response data type */
-      export { AxiosRequestConfig } from 'axios'
+      export type { AxiosRequestConfig } from 'axios'
       export interface ResponseType<T = any> {
         code: number
         message: string

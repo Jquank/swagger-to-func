@@ -2,7 +2,7 @@
   "name": "swagger-to-func",
   "displayName": "swagger-to-func",
   "description": "swagger api json to func",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "publisher": "stf-token",
   "engines": {
     "vscode": "^1.85.0"
